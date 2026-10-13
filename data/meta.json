@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "version": "d9077a39540340f7",
+  "erstellt": "2026-10-13",
+  "kdf": {
+    "name": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 300000,
+    "salt": "LZFlGnz/g/GLvi4UiP4WsQ=="
+  },
+  "cipher": "AES-256-GCM",
+  "pruef": {
+    "iv": "iy2ENHnBB329Sxlb",
+    "data": "SG3GtNayzaqiuuc/maKopKNYVy5E+aezEcw71w=="
+  },
+  "files": {
+    "mosaik": {
+      "path": "data/mosaik.bin",
+      "iv": "l+/AzXCbRVYWgtvs",
+      "size": 29070558,
+      "bytes": 29070574,
+      "type": "video/mp4"
+    },
+    "audio": {
+      "path": "data/audio.bin",
+      "iv": "GjGoFOgjnSYm+jfy",
+      "size": 13950332,
+      "bytes": 13950348,
+      "type": "application/json"
+    }
+  }
+}

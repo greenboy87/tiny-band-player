@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<script>
+// Passwort aus dem QR-Code lesen und sofort aus der Adresszeile (und dem Verlauf) entfernen.
+let TB_HASH_PW = null;
+(() => {
+  const m = location.hash.match(/(?:^#|&)pw=([^&]*)/);
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  if (m) { try { TB_HASH_PW = decodeURIComponent(m[1]); } catch (e) { TB_HASH_PW = m[1]; } }
+})();
+</script>
+<title>Tiny Band – Live-Player</title>
+<style>
+  :root {
+    --bg1: #120A2A; --bg2: #3D1A5C; --surface: #22143D; --line: #3E2A66;
+    --text: #FFFFFF; --muted: #CDBDF0; --accent: #FF9E5E; --accent2: #9B5CF6;
+    --fade: 600ms;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg1), var(--bg2));
+    color: var(--text);
+    font-family: "Century Gothic", Futura, "Avenir Next", system-ui, sans-serif;
+    overflow: hidden; user-select: none;
+    display: grid; grid-template-rows: auto 1fr auto; height: 100vh;
+  }
+  /* Sterne + Skyline */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image:
+      radial-gradient(1.2px 1.2px at 12% 18%, #fff8, transparent),
+      radial-gradient(1px 1px at 33% 9%, #fff6, transparent),
+      radial-gradient(1.4px 1.4px at 58% 22%, #fff7, transparent),
+      radial-gradient(1px 1px at 77% 12%, #fff5, transparent),
+      radial-gradient(1.2px 1.2px at 91% 30%, #fff6, transparent),
+      radial-gradient(1px 1px at 22% 40%, #fff4, transparent),
+      radial-gradient(1px 1px at 68% 44%, #fff4, transparent);
+  }
+  .skyline { position: fixed; left: 0; right: 0; bottom: 0; height: 9vh; z-index: -1; opacity: .9; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.4vh 2.2vw 0.6vh;
+  }
+  .brand { font-size: 12px; font-weight: 700; letter-spacing: .25em; color: var(--muted); }
+  .now { display: flex; align-items: center; gap: 14px; }
+  .live {
+    display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 99px;
+    border: 1px solid #ff5e7866; font-size: 12px; font-weight: 700; letter-spacing: .2em; color: #ffb3c0;
+  }
+  .live i { width: 9px; height: 9px; border-radius: 50%; background: #ff5e78; box-shadow: 0 0 10px #ff5e78; }
+  .paused .live i { background: #776; box-shadow: none; }
+  .nowname { font-size: 26px; font-weight: 700; }
+  .nowname small { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+
+  /* Bühne */
+  main { display: flex; align-items: center; justify-content: center; padding: 0.6vh 2.2vw; min-height: 0; }
+  .stage {
+    position: relative; aspect-ratio: 16 / 9; height: 100%; max-width: 100%;
+    border-radius: 18px; overflow: hidden; background: #000;
+    box-shadow: 0 20px 60px #0008, 0 0 0 1px var(--line);
+  }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .tag {
+    position: absolute; left: 18px; top: 16px; padding: 6px 14px; border-radius: 99px;
+    background: #120A2Acc; font-weight: 700; font-size: 18px; display: flex; align-items: center; gap: 10px;
+    transition: opacity var(--fade); backdrop-filter: blur(4px);
+  }
+  .tag .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .stage.grid .tag { opacity: 0; }
+  .gridlabels { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity var(--fade); }
+  .stage.grid .gridlabels { opacity: 1; }
+  .gridlabels span { position: absolute; padding: 4px 10px; border-radius: 99px; background: #120A2Acc; font-weight: 700; font-size: 14px; }
+  #mv { position: fixed; left: 0; top: 0; width: 4px; height: 4px; opacity: 0.01; pointer-events: none; }
+  .start .load { color: var(--accent); font-weight: 700; letter-spacing: .1em; }
+  /* Start-Overlay */
+  .start {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(circle at 50% 45%, #3D1A5Ccc, #120A2Af2); cursor: pointer; z-index: 5; text-align: center;
+  }
+  .start .play {
+    width: 120px; height: 120px; border-radius: 50%; background: var(--accent); display: grid; place-items: center;
+    box-shadow: 0 0 0 10px #ff9e5e33;
+  }
+  .start .play::after { content: ""; border-left: 38px solid #1B1230; border-top: 24px solid transparent; border-bottom: 24px solid transparent; margin-left: 10px; }
+  .start h1 { margin: 0; font-size: 40px; }
+  .start p { margin: 0; color: var(--muted); font-size: 18px; }
+  .start.hidden { display: none; }
+
+  /* Steuerleiste */
+  footer { padding: 0.8vh 2.2vw 8vh; display: grid; gap: 1.1vh; }
+  .chans { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .chan {
+    display: flex; align-items: center; gap: 12px; padding: 10px 18px 10px 10px; border-radius: 16px;
+    background: var(--surface); border: 2px solid var(--line); color: var(--text); cursor: pointer;
+    font: inherit; font-size: 19px; font-weight: 700; min-width: 170px; transition: border-color .2s, transform .2s, background .2s;
+  }
+  .chan:hover { border-color: #5E4D8C; }
+  .chan.on { border-color: var(--accent); background: #2C1A4E; transform: translateY(-2px); }
+  .chan .ic { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+  .chan .ic svg { width: 26px; height: 26px; }
+  .chan kbd {
+    margin-left: auto; font: inherit; font-size: 12px; color: var(--muted); border: 1px solid #5E4D8C; border-radius: 6px; padding: 1px 7px;
+  }
+  .chan.wide { min-width: 0; }
+  .bars { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; align-items: stretch; }
+  .bar {
+    height: 30px; border-radius: 4px; display: grid; place-items: center; font-size: 12px; font-weight: 700; cursor: pointer;
+    background: #ECE4FD; color: #1B1230; transition: transform .12s, box-shadow .12s, background .12s;
+  }
+  .bar.pause, .bar.intro { background: #F1EEF7; }
+  .bar.ref { background: #7B3FE4; color: #fff; }
+  .bar.cur { background: var(--accent); color: #1B1230; transform: scaleY(1.18); box-shadow: 0 0 14px #ff9e5e99; }
+  .barlabels { display: grid; grid-template-columns: 1fr 10fr 1fr 8fr; font-size: 11px; letter-spacing: .15em; font-weight: 700; color: var(--muted); text-align: center; }
+  .ctrl { display: flex; justify-content: center; gap: 10px; align-items: center; color: var(--muted); font-size: 14px; }
+  .btn {
+    font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: transparent; border: 1px solid #5E4D8C;
+    border-radius: 99px; padding: 6px 14px; cursor: pointer;
+  }
+  .btn.on { background: var(--accent2); border-color: var(--accent2); }
+  .count { font-variant-numeric: tabular-nums; min-width: 150px; text-align: center; color: var(--text); font-weight: 700; }
+  .help { font-size: 12px; color: #9C8CC8; }
+  .err { position: absolute; inset: auto 18px 18px 18px; background: #5a1530; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 15px; display: none; z-index: 6; }
+  @media (prefers-reduced-motion: reduce) { :root { --fade: 1ms; } }
+  .pp {
+    width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer; flex: none;
+    background: var(--accent); box-shadow: 0 0 0 6px #ff9e5e33, 0 6px 20px #0007; display: grid; place-items: center;
+    transition: transform .15s;
+  }
+  .pp:hover { transform: scale(1.06); }
+  .pp svg { width: 30px; height: 30px; }
+  .ppwrap { display: flex; align-items: center; gap: 14px; margin-right: 10px; }
+  .pplabel { font-size: 18px; font-weight: 700; color: var(--text); min-width: 74px; }
+  .stage { cursor: pointer; }
+  /* ---------- Code-Eingabe und Laden (vor dem Player) ---------- */
+  .gate {
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px;
+    background: linear-gradient(180deg, var(--bg1), var(--bg2));
+  }
+  .gate.hidden { display: none; }
+  .gatebox { width: min(520px, 100%); display: grid; gap: 22px; text-align: center; }
+  .gatebox .brand { font-size: 13px; }
+  .gatebox h1 { margin: 0; font-size: clamp(30px, 6vw, 44px); line-height: 1.1; }
+  .gatebox p { margin: 0; color: var(--muted); font-size: 18px; }
+  .gateform { display: grid; gap: 14px; }
+  .gateform.hidden, .gateload.hidden, .gatemsg:empty { display: none; }
+  .gateform input {
+    width: 100%; min-height: 76px; padding: 0 20px; border-radius: 18px; border: 2px solid var(--line);
+    background: var(--surface); color: var(--text); font: inherit; font-size: 26px; font-weight: 700; text-align: center;
+    letter-spacing: .08em; outline: none; -webkit-user-select: text; user-select: text;
+  }
+  .gateform input:focus { border-color: var(--accent); box-shadow: 0 0 0 5px #ff9e5e33; }
+  .gateform input::placeholder { color: #8E7DBB; font-weight: 400; letter-spacing: 0; }
+  .gateform button {
+    min-height: 76px; border: none; border-radius: 18px; background: var(--accent); color: #1B1230; cursor: pointer;
+    font: inherit; font-size: 24px; font-weight: 700; box-shadow: 0 0 0 6px #ff9e5e33, 0 8px 24px #0007;
+    touch-action: manipulation;
+  }
+  .gateform button:active { transform: scale(.98); }
+  .gateload { display: grid; gap: 12px; }
+  .gateload .ptxt { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: .05em; font-variant-numeric: tabular-nums; }
+  .gateload .track { height: 16px; border-radius: 99px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+  .gateload .fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 99px; }
+  .gatemsg { padding: 14px 18px; border-radius: 14px; background: #5a1530; color: #fff; font-size: 18px; font-weight: 700; }
+</style>
+</head>
+<body class="paused">
+<svg class="skyline" viewBox="0 0 1600 90" preserveAspectRatio="none" aria-hidden="true">
+  <path fill="#0B0716" d="M0 90V52h40v-14h30v20h26V30h22v28h40V44h18v-26h6v-12h4v12h6v26h30v22h44V36h28v30h36V50h24V20h30v42h38V46h26v18h40V34h22v-16h4v16h20v40h44V54h30v-22h36v38h28V44h40v22h30V28h26v36h44V48h30v-20h6V14h4v14h8v40h36V52h28v18h40V38h30v26h44V50h24v-24h30v40h38V42h26v26h40V30h22v34h46V48h28v22h36V36h30v34h44V52h26v-30h30v44h40V44h24v22h40V34h30v36h38V50h26v40z"/>
+  <g fill="#FFC88C" opacity=".35">
+    <rect x="104" y="40" width="4" height="6"/><rect x="226" y="30" width="4" height="6"/><rect x="390" y="50" width="4" height="6"/>
+    <rect x="560" y="44" width="4" height="6"/><rect x="744" y="36" width="4" height="6"/><rect x="930" y="56" width="4" height="6"/>
+    <rect x="1112" y="40" width="4" height="6"/><rect x="1300" y="46" width="4" height="6"/><rect x="1480" y="42" width="4" height="6"/>
+  </g>
+</svg>
+
+<header>
+  <div class="brand">TINY BAND · END OF BEGINNING · LIVE-PLAYER</div>
+  <div class="now"><span class="live"><i></i>LIVE</span><span class="nowname" id="nowname">Synth</span></div>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="tag" id="tag"><span class="dot" id="tagdot"></span><span id="tagname">Synth</span></div>
+    <div class="gridlabels">
+      <span style="left:12px;top:10px">1 · Synth</span><span style="left:calc(50% + 12px);top:10px">2 · E-Bass</span>
+      <span style="left:12px;top:calc(50% + 10px)">3 · Drums</span><span style="left:calc(50% + 12px);top:calc(50% + 10px)">4 · Ukulele</span>
+    </div>
+    <div class="start" id="start">
+      <div class="play"></div>
+      <h1>Live-Schalte starten</h1>
+      <p id="startinfo" class="load">Lädt Ton und Video …</p>
+    </div>
+    <div class="err" id="err"></div>
+  </div>
+</main>
+<video id="mv" muted playsinline preload="auto"></video>
+
+<footer>
+  <div class="chans" id="chans"></div>
+  <div>
+    <div class="bars" id="bars"></div>
+    <div class="barlabels"><span>INTRO</span><span>VERS</span><span>PAUSE</span><span>REFRAIN</span></div>
+  </div>
+  <div class="ctrl">
+    <span class="ppwrap"><button class="pp" id="bPlay" aria-label="Play/Pause"></button><span class="pplabel" id="ppl">Start</span></span>
+    <button class="btn" id="bBack">⟲ Von vorn</button>
+    <span class="count" id="count">Einzählen</span>
+    <button class="btn" id="bTempo">Tempo 1x</button>
+    <span class="help">1–5 Stimme · G 4er-Ansicht · Leertaste Play/Pause · ←/→ Takt · T Tempo · F Vollbild</span>
+  </div>
+</footer>
+
+<div class="gate" id="gate">
+  <div class="gatebox">
+    <div class="brand">TINY BAND · LIVE-PLAYER</div>
+    <h1>End Of Beginning</h1>
+    <div class="gatemsg" id="gmsg" role="alert"></div>
+    <form class="gateform hidden" id="gform" autocomplete="off">
+      <p>Gib den Code ein oder scanne den QR-Code.</p>
+      <input id="gpw" type="password" placeholder="Code" aria-label="Code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+      <button type="submit">Los geht’s</button>
+    </form>
+    <div class="gateload hidden" id="gload">
+      <div class="ptxt" id="gptxt">Lade Song …</div>
+      <div class="track"><div class="fill" id="gfill"></div></div>
+    </div>
+  </div>
+</div>
+<script>
+// Lädt die verschlüsselten Dateien (data/*.bin), speichert sie verschlüsselt im Cache des Geräts
+// und entschlüsselt sie im Speicher (WebCrypto: PBKDF2-SHA-256 + AES-256-GCM).
+// Passwort und entschlüsselte Daten werden nie gespeichert.
+(() => {
+  const $ = id => document.getElementById(id);
+  const CACHE = 'tiny-band-daten';
+  const gate = $('gate'), form = $('gform'), input = $('gpw'), load = $('gload'), msg = $('gmsg');
+  const MSG_FALSCH = 'Code stimmt nicht – scanne den QR-Code nochmal';
+  const MSG_NETZ = 'Laden hat nicht geklappt – prüfe das WLAN und lade die Seite neu.';
+  class FalscherCode extends Error {}
+  class Kaputt extends Error {}
+
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const zeige = (was, text = '') => {
+    form.classList.toggle('hidden', was !== 'form'); load.classList.toggle('hidden', was !== 'load');
+    msg.textContent = text;
+    if (was === 'form') { input.value = ''; setTimeout(() => input.focus(), 50); }
+  };
+  const fortschritt = (text, anteil) => {
+    $('gptxt').textContent = anteil == null ? text : `${text} ${Math.floor(anteil * 100)} %`;
+    if (anteil != null) $('gfill').style.width = (anteil * 100).toFixed(1) + '%';
+  };
+
+  async function oeffneCache() { try { return await caches.open(CACHE); } catch (e) { return null; } }
+
+  async function holeMeta(cache) {
+    try {
+      const r = await fetch('data/meta.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      const meta = await r.clone().json();
+      if (cache) await cache.put('data/meta.json', r).catch(() => {});
+      return meta;
+    } catch (e) {                       // offline: zuletzt gespeicherte meta.json verwenden
+      const r = cache && await cache.match('data/meta.json');
+      if (r) return r.json();
+      throw e;
+    }
+  }
+
+  // Lädt eine verschlüsselte Datei – aus dem Cache oder mit Fortschritt aus dem Netz.
+  async function holeBin(cache, meta, f, onBytes) {
+    const url = `${f.path}?v=${meta.version}`;
+    const hit = cache && await cache.match(url).catch(() => null);
+    if (hit) {
+      const buf = new Uint8Array(await hit.arrayBuffer());
+      if (buf.length === f.bytes) { onBytes(buf.length); return buf; }
+      await cache.delete(url);
+    }
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    const buf = new Uint8Array(f.bytes), reader = r.body.getReader();
+    let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (n + value.length > buf.length) throw new Error('Datei zu groß');
+      buf.set(value, n); n += value.length; onBytes(n);
+    }
+    if (n !== f.bytes) throw new Error('Download unvollständig');
+    if (cache) await cache.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } })).catch(() => {});
+    return buf;
+  }
+
+  async function aufraeumen(cache, meta) {
+    if (!cache) return;
+    for (const req of await cache.keys()) {
+      const u = new URL(req.url);
+      if (u.pathname.endsWith('.bin') && u.searchParams.get('v') !== meta.version) await cache.delete(req);
+    }
+  }
+
+  async function starte(pw) {
+    zeige('load'); fortschritt('Prüfe Code …', null); $('gfill').style.width = '0';
+    if (!window.crypto || !crypto.subtle) throw new Error('Dieser Browser kann die Datei nicht entschlüsseln.');
+    const cache = await oeffneCache();
+    const meta = await holeMeta(cache);
+
+    // Schlüssel ableiten und am kleinen Prüfblock testen, bevor 40 MB geladen werden
+    const basis = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw.normalize('NFC')), 'PBKDF2', false, ['deriveKey']);
+    pw = null;
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', hash: meta.kdf.hash, salt: unb64(meta.kdf.salt), iterations: meta.kdf.iterations },
+      basis, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    const ent = (iv, data) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, key, data);
+    try { await ent(meta.pruef.iv, unb64(meta.pruef.data)); } catch (e) { throw new FalscherCode(); }
+
+    // Herunterladen (oder aus dem Cache)
+    const F = meta.files, gesamt = F.mosaik.bytes + F.audio.bytes, stand = { mosaik: 0, audio: 0 };
+    const melde = k => n => { stand[k] = n; fortschritt('Lade Song …', (stand.mosaik + stand.audio) / gesamt); };
+    fortschritt('Lade Song …', 0);
+    const [encVideo, encAudio] = await Promise.all([holeBin(cache, meta, F.mosaik, melde('mosaik')), holeBin(cache, meta, F.audio, melde('audio'))]);
+
+    // Entschlüsseln (nur im Speicher)
+    fortschritt('Entschlüssele …', null);
+    let video, audio;
+    try {
+      audio = JSON.parse(new TextDecoder().decode(await ent(F.audio.iv, encAudio)));
+      video = new Blob([await ent(F.mosaik.iv, encVideo)], { type: F.mosaik.type });
+    } catch (e) {
+      if (cache) await caches.delete(CACHE).catch(() => {});   // beschädigte Kopie verwerfen
+      throw new Kaputt();
+    }
+    aufraeumen(cache, meta).catch(() => {});
+
+    const mv = $('mv');
+    mv.src = URL.createObjectURL(video); mv.load();
+    window.TB_AUDIO = audio;
+    gate.classList.add('hidden');
+    window.TB_START();
+  }
+
+  async function versuche(pw) {
+    try { await starte(pw); }
+    catch (e) {
+      if (e instanceof FalscherCode) zeige('form', MSG_FALSCH);
+      else if (e instanceof Kaputt) zeige('form', 'Die Datei war beschädigt – bitte nochmal versuchen.');
+      else zeige('form', e && e.message && e.message.startsWith('Dieser Browser') ? e.message : MSG_NETZ);
+    }
+  }
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const pw = input.value.trim(); input.value = ''; input.blur();
+    if (pw) versuche(pw);
+  });
+
+  // Passwort aus dem QR-Code (#pw=…) holen und den Hash sofort aus der Adresszeile entfernen
+  const pw = TB_HASH_PW; TB_HASH_PW = null;
+  if (pw) versuche(pw); else zeige('form');
+})();
+</script>
+<script>
+// Der Player startet erst, wenn Video (Blob-URL) und Ton (window.TB_AUDIO) entschlüsselt sind.
+window.TB_START = () => {
+  // Ein Mosaik-Video (2560×2160, Kacheln à 1280×720) + fünf vorab geladene Tonspuren (Web Audio).
+  // Ton = Taktgeber, das eine Video folgt ihm. Clips: 3,0 s Einzählen, dann 20 Takte à 3,0 s.
+  const COUNTIN = 3.0, BAR = 3.0, BARS = 20, LEN = 64, FADE = 0.6, TW = 1280, TH = 720;
+  const CH = [
+    { k: 'synth',   name: 'Synth',         sub: 'Keyboard', col: '#7B3FE4', key: '1', tile: 0 },
+    { k: 'bass',    name: 'E-Bass',        sub: '',         col: '#0F9B8E', key: '2', tile: 1 },
+    { k: 'drums',   name: 'Drums',         sub: 'Drumset',  col: '#4F5BD5', key: '3', tile: 2 },
+    { k: 'ukulele', name: 'Ukulele',       sub: '',         col: '#E08A1E', key: '4', tile: 3 },
+    { k: 'alle',    name: 'Alle zusammen', sub: 'Partitur', col: '#FF9E5E', key: '5', tile: 4 },
+  ];
+  const ICON = {
+    synth: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="1.5"/><path d="M7.5 6v12M12 6v12M16.5 6v12"/><path d="M6 6h3v6H6zM10.5 6h3v6h-3zM15 6h3v6h-3z" fill="#fff" stroke="none"/></svg>',
+    bass: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v13"/><path d="M10.5 2.5h3"/><path d="M9 14c-3 0-4 2-4 4s1.5 4 4 4h6c2.5 0 4-2 4-4s-1-4-4-4"/><path d="M10 18h4"/></svg>',
+    drums: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="12" rx="8" ry="3"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/><path d="M6 3l6 7M18 3l-6 7"/></svg>',
+    ukulele: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v9"/><path d="M10.5 2.5h3"/><path d="M12 10c-2.5 0-3.5 1.6-3.2 3.2C6.5 14 6 15.6 6 17c0 2.8 2.7 5 6 5s6-2.2 6-5c0-1.4-.5-3-2.8-3.8.3-1.6-.7-3.2-3.2-3.2z"/><circle cx="12" cy="17" r="1.6"/></svg>',
+    alle: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 10h18M3 14h18M3 18h18"/><circle cx="8" cy="10" r="1.6" fill="#fff"/><circle cx="14" cy="14" r="1.6" fill="#fff"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
+  };
+  const $ = id => document.getElementById(id);
+  const PLAY_I = '<svg viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z" fill="#1B1230"/></svg>';
+  const PAUSE_I = '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4.5" height="14" rx="1" fill="#1B1230"/><rect x="13.5" y="5" width="4.5" height="14" rx="1" fill="#1B1230"/></svg>';
+  $('bPlay').innerHTML = PLAY_I;
+  const stage = $('stage'), cv = $('cv'), g2 = cv.getContext('2d'), mv = $('mv');
+
+  // ---------- Ton ----------
+  const AC = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = { normal: {}, slow: {} }, gain = {};
+  CH.forEach(c => { gain[c.k] = AC.createGain(); gain[c.k].gain.value = 0; gain[c.k].connect(AC.destination); });
+  const b64 = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
+  const decode = ab => new Promise((res, rej) => AC.decodeAudioData(ab, res, rej));
+  let ready = false;
+  (async () => {
+    try {
+      if (!window.TB_AUDIO) throw new Error('Ton fehlt');
+      for (const mode of ['normal', 'slow']) for (const c of CH) buf[mode][c.k] = await decode(b64(TB_AUDIO[mode][c.k]));
+      await new Promise(r => mv.readyState >= 3 ? r() : mv.addEventListener('canplaythrough', r, { once: true }));
+      ready = true; $('startinfo').textContent = 'Klick oder Leertaste · danach mit 1–5 zwischen den Stimmen umschalten';
+      $('startinfo').classList.remove('load');
+    } catch (e) { showErr(e); }
+  })();
+
+  let current = 'synth', prevK = null, fadeT0 = 0, grid = false, gridT0 = -1e9, playing = false, rate = 1;
+  let srcs = [], pos0 = 0, ac0 = 0;
+  const pos = () => playing ? Math.min(LEN, pos0 + (AC.currentTime - ac0) * rate) : pos0;
+  const audible = () => grid ? 'alle' : current;
+
+  function startAudio(p) {
+    stopAudio();
+    const mode = rate === 1 ? 'normal' : 'slow', t0 = AC.currentTime + 0.05;
+    CH.forEach(c => {
+      const s = AC.createBufferSource(); s.buffer = buf[mode][c.k]; s.connect(gain[c.k]);
+      s.start(t0, p / rate); srcs.push(s);
+    });
+    pos0 = p; ac0 = t0;
+    CH.forEach(c => { gain[c.k].gain.cancelScheduledValues(0); gain[c.k].gain.setValueAtTime(c.k === audible() ? 1 : 0, t0); });
+  }
+  function stopAudio() { srcs.forEach(s => { try { s.stop(); } catch (e) {} }); srcs = []; }
+  function fadeTo(from, to) {
+    if (from === to) return;
+    const t = AC.currentTime;
+    [[from, 0], [to, 1]].forEach(([k, v]) => { const gp = gain[k].gain; gp.cancelScheduledValues(t); gp.setValueAtTime(gp.value, t); gp.linearRampToValueAtTime(v, t + FADE); });
+  }
+
+  // ---------- Bedienelemente ----------
+  const chans = $('chans');
+  CH.forEach(c => {
+    const b = document.createElement('button'); b.className = 'chan'; b.dataset.k = c.k;
+    b.innerHTML = `<span class="ic" style="background:${c.col}">${ICON[c.k]}</span><span>${c.name}</span><kbd>${c.key}</kbd>`;
+    b.onclick = () => switchTo(c.k); chans.appendChild(b);
+  });
+  const gb = document.createElement('button'); gb.className = 'chan wide'; gb.dataset.k = 'grid';
+  gb.innerHTML = `<span class="ic" style="background:#3E2A66">${ICON.grid}</span><span>4er-Ansicht</span><kbd>G</kbd>`;
+  gb.onclick = () => toggleGrid(); chans.appendChild(gb);
+  const barsEl = $('bars');
+  for (let t = 1; t <= BARS; t++) {
+    const d = document.createElement('div');
+    d.className = 'bar' + (t === 1 ? ' intro' : t === 12 ? ' pause' : t >= 13 ? ' ref' : '');
+    d.textContent = t; d.onclick = () => seek(COUNTIN + (t - 1) * BAR); barsEl.appendChild(d);
+  }
+  function renderUi() {
+    stage.classList.toggle('grid', grid);
+    document.querySelectorAll('.chan').forEach(b => b.classList.toggle('on', grid ? b.dataset.k === 'grid' : b.dataset.k === current));
+    const c = CH.find(x => x.k === current);
+    $('tagname').textContent = c.name; $('tagdot').style.background = c.col;
+    $('nowname').innerHTML = grid ? '4er-Ansicht <small>Ton: alle zusammen</small>' : c.name + (c.sub ? ` <small>${c.sub}</small>` : '');
+  }
+
+  function switchTo(k) {
+    if (k === current && !grid) return;
+    const before = audible();
+    if (!grid) { prevK = current; fadeT0 = performance.now(); } else { prevK = null; gridT0 = performance.now(); }
+    current = k; grid = false;
+    fadeTo(before, audible()); renderUi();
+    if (!playing && ready) play();
+  }
+  function toggleGrid() {
+    const before = audible(); grid = !grid; gridT0 = performance.now(); prevK = null;
+    fadeTo(before, audible()); renderUi();
+  }
+  function play() {
+    if (!ready) return;
+    $('start').classList.add('hidden');
+    AC.resume();
+    if (pos0 >= LEN - 0.1) pos0 = 0;
+    playing = true; startAudio(pos0);
+    mv.currentTime = pos0; mv.playbackRate = rate; mv.play().catch(showErr);
+    document.body.classList.remove('paused'); document.body.classList.add('started'); $('bPlay').innerHTML = PAUSE_I; $('ppl').textContent = 'Pause';
+  }
+  function pause() {
+    pos0 = pos(); playing = false; stopAudio(); mv.pause();
+    document.body.classList.add('paused'); $('bPlay').innerHTML = PLAY_I; $('ppl').textContent = 'Weiter';
+  }
+  function seek(t) {
+    t = Math.max(0, Math.min(LEN - 0.2, t));
+    if (playing) { startAudio(t); } else { pos0 = t; }
+    mv.currentTime = t;
+  }
+  function setRate(r) {
+    const p = pos(); rate = r;
+    if (playing) { startAudio(p); mv.playbackRate = r; mv.currentTime = p; }
+    $('bTempo').textContent = `Tempo ${r === 1 ? '1x' : '0,75x'}`; $('bTempo').classList.toggle('on', r !== 1);
+  }
+  function showErr(e) {
+    const el = $('err');
+    el.textContent = 'Problem: ' + (e && e.message ? e.message : e) + ' – bitte Seite neu laden.';
+    el.style.display = 'block';
+  }
+  mv.addEventListener('error', () => showErr('Video konnte nicht geladen werden'));
+
+  // ---------- Video dem Ton nachführen (sanft, ohne Sprünge) ----------
+  let lastSeek = 0;
+  setInterval(() => {
+    if (!playing) return;
+    const p = pos();
+    if (p >= LEN - 0.05) { pause(); pos0 = LEN; return; }
+    if (mv.seeking) return;
+    const d = mv.currentTime - p, now = performance.now();
+    if (Math.abs(d) > 0.35 && now - lastSeek > 1500) { mv.currentTime = p + 0.1; lastSeek = now; }
+    else mv.playbackRate = rate * (1 - Math.max(-0.1, Math.min(0.1, d * 0.8)));
+    if (mv.paused) mv.play().catch(() => {});
+  }, 250);
+
+  // ---------- Zeichnen ----------
+  function resize() {
+    const r = stage.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  }
+  new ResizeObserver(resize).observe(stage); resize();
+  const tileXY = i => [(i % 2) * TW, Math.floor(i / 2) * TH];
+  function drawTile(i, x, y, w, h, alpha) {
+    const [sx, sy] = tileXY(i); g2.globalAlpha = alpha; g2.drawImage(mv, sx, sy, TW, TH, x, y, w, h);
+  }
+  let lastBar = -1;
+  function frame() {
+    const W = cv.width, H = cv.height, now = performance.now();
+    if (mv.readyState >= 2) {
+      g2.globalAlpha = 1; g2.fillStyle = '#000'; g2.fillRect(0, 0, W, H);
+      const gp = Math.min(1, (now - gridT0) / (FADE * 1000));        // Übergang 4er-Ansicht
+      const single = () => {
+        const c = CH.find(x => x.k === current), fp = prevK ? Math.min(1, (now - fadeT0) / (FADE * 1000)) : 1;
+        if (prevK && fp < 1) drawTile(CH.find(x => x.k === prevK).tile, 0, 0, W, H, 1);
+        drawTile(c.tile, 0, 0, W, H, prevK ? fp : 1);
+        if (fp >= 1) prevK = null;
+      };
+      const quad = a => { for (let i = 0; i < 4; i++) drawTile(i, (i % 2) * W / 2, Math.floor(i / 2) * H / 2, W / 2, H / 2, a); };
+      if (grid) { if (gp < 1) single(); quad(gp); g2.globalAlpha = gp; }
+      else { if (gp < 1) quad(1); g2.globalAlpha = 1; if (gp < 1) { g2.globalAlpha = gp; const c = CH.find(x => x.k === current); drawTile(c.tile, 0, 0, W, H, gp); } else single(); }
+      if (grid) { g2.globalAlpha = gp; g2.fillStyle = '#120A2A'; g2.fillRect(W / 2 - 2, 0, 4, H); g2.fillRect(0, H / 2 - 2, W, 4); }
+      g2.globalAlpha = 1;
+    }
+    const t = pos(), bar = t < COUNTIN ? 0 : Math.min(BARS, Math.floor((t - COUNTIN) / BAR) + 1);
+    if (bar !== lastBar) {
+      lastBar = bar;
+      barsEl.querySelectorAll('.bar').forEach((d, i) => d.classList.toggle('cur', i + 1 === bar));
+      const part = bar === 1 ? 'Intro' : bar <= 11 ? 'Vers' : bar === 12 ? 'Pause' : 'Refrain';
+      $('count').textContent = bar === 0 ? 'Einzählen' : `Takt ${bar} · ${part}`;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------- Tastatur ----------
+
+  // Tippen/Klicken ins Video = Play/Pause (ohne sichtbares Overlay)
+  stage.addEventListener('click', e => {
+    if (e.target.closest('#start')) return;
+    if (!ready) return;
+    playing ? pause() : play();
+  });
+  $('start').onclick = () => play();
+  $('bPlay').onclick = () => playing ? pause() : play();
+  $('bBack').onclick = () => { seek(0); if (!playing) play(); };
+  $('bTempo').onclick = () => setRate(rate === 1 ? 0.75 : 1);
+  document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const c = CH.find(x => x.key === e.key);
+    if (c) { switchTo(c.k); return; }
+    switch (e.key.toLowerCase()) {
+      case ' ': e.preventDefault(); playing ? pause() : play(); break;
+      case 'g': toggleGrid(); break;
+      case 'r': seek(0); if (!playing) play(); break;
+      case 't': setRate(rate === 1 ? 0.75 : 1); break;
+      case 'f': document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); break;
+      case 'arrowright': seek(pos() + BAR); break;
+      case 'arrowleft': seek(pos() - BAR); break;
+    }
+  });
+  renderUi();
+};
+</script>
+</body>
+</html>

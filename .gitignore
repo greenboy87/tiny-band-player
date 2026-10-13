@@ -1,0 +1,6 @@
+# Originaldateien und QR-Codes (enthalten unverschlüsselte Inhalte bzw. das Passwort) – NIE committen
+quelle/
+qr/
+.claude/
+node_modules/
+.DS_Store
